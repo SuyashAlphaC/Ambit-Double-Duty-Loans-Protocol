@@ -1,248 +1,106 @@
-# YieldDonating Strategy Development Guide for Octant
 
-This repository provides a template for creating **YieldDonating strategies** compatible with Octant's ecosystem using [Foundry](https://book.getfoundry.sh/). YieldDonating strategies donate all generated yield to a donation address.
+***
 
-## What is a YieldDonating Strategy?
+# Auto-Repaying Public Goods Loan Strategy (Spark + Morpho)
 
-YieldDonating strategies are designed to:
-- Deploy assets into external yield sources (Aave, Compound, Yearn vaults, etc.)
-- Harvest yield and donate 100% of profits to public goods funding
-- Optionally protect users from losses by burning dragonRouter shares
-- Charge NO performance fees to users
+## 1. High-Level Concept: The "Buy-One-Get-One" for DAOs
 
-## Getting Started
+This project implements the **"Auto-Repaying Public Goods Loan"** strategy, a sophisticated, dual-benefit system built for the Octant `YieldDonatingStrategy` framework.
 
-### Prerequisites
+It's designed for a DAO treasury (or any user) to deposit a base asset like DAI and achieve two goals simultaneously, creating a "buy-one-get-one" for public goods:
 
-1. Install [Foundry](https://book.getfoundry.sh/getting-started/installation) (WSL recommended for Windows)
-2. Install [Node.js](https://nodejs.org/en/download/package-manager/)
-3. Clone this repository:
-```sh
-git clone git@github.com:golemfoundation/octant-v2-strategy-foundry-mix.git
-```
+1.  **Fund Public Goods:** It generates yield from lending interest and donates 100% of it to the Octant public goods fund (the `dragonRouter`).
+2.  **Provide a Community Service:** It uses a *separate, primary* yield source (Spark's sDAI) to automatically pay down the loan principals for a whitelist of community members.
 
-4. Install dependencies:
-```sh
-forge install
-forge soldeer install
-```
+The DAO's treasury itself remains 1:1 pegged to their deposit, as all generated yield is "donated" in one of these two ways.
 
-### Environment Setup
+---
 
-1. Copy `.env.example` to `.env`
-2. Set the required environment variables:
-```env
-# Required for testing
-TEST_ASSET_ADDRESS=0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48  # USDC on mainnet
-TEST_YIELD_SOURCE=0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2   # Your yield source address
+## 2. Core Architecture: The "Winning Twist"
 
-# RPC URLs
-ETH_RPC_URL=https://mainnet.infura.io/v3/YOUR_INFURA_API_KEY  # Get your key from infura.io
-```
+The strategy's architecture, implemented in `src/strategies/yieldDonating/YieldDonatingStrategy.sol`, is a multi-step process that creates two distinct yield streams.
 
-## Strategy Development Step-by-Step
+### `_deployFunds(uint256 _amount)`: Building the Engine
 
-### 1. Understanding the Template Structure
+When a user (e.g., a DAO) deposits DAI, the `_deployFunds` function executes the following:
 
-The YieldDonating strategy template (`src/strategies/yieldDonating/YieldDonatingStrategy.sol`) contains:
-- **Constructor parameters** you need to provide
-- **Mandatory functions** (marked with TODO) you MUST implement
-- **Optional functions** you can override if needed
-- **Built-in functionality** for profit donation and loss protection
+1.  **Earn Base Yield:** The strategy deposits 100% of the incoming `_amount` (DAI) into Spark Protocol to receive `sDAI`. This `sDAI` immediately starts earning the DSR (DAI Savings Rate), which becomes our **Primary Yield**.
+2.  **Provide Collateral:** The strategy takes this `sDAI` and supplies it as collateral to an isolated Morpho Blue market.
+3.  **Borrow (Create Liquidity):** It then borrows DAI against its own `sDAI` collateral, up to a safe `targetLTV` (defaulted to 50%).
+4.  **Create Lending Pool:** Finally, it supplies this *borrowed* DAI back into the *same* Morpho market. This supplied DAI becomes the loanable liquidity for the community. The interest paid by community members on this liquidity becomes our **Secondary Yield**.
 
-### 2. Define Your Yield Source Interface
+At this point, the strategy is in a stable state:
+* It's earning **DSR (Yield 1)** on its `sDAI` collateral.
+* It's earning **Morpho lending interest (Yield 2)** on its `DAI` supply.
+* It's paying Morpho borrow interest on its `DAI` debt (which is offset by the lending interest).
 
-First, implement the `IYieldSource` interface for your specific protocol:
+---
 
-```solidity
-// TODO: Replace with your yield source interface
-interface IYieldSource {
-    // Example for Aave V3:
-    function supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode) external;
-    function withdraw(address asset, uint256 amount, address to) external returns (uint256);
-    
-    // Example for ERC4626 vaults:
-    function deposit(uint256 assets, address receiver) external returns (uint256);
-    function redeem(uint256 shares, address receiver, address owner) external returns (uint256);
-    function convertToAssets(uint256 shares) external view returns (uint256);
-}
-```
+## 3. The Dual-Yield Mechanism: `_harvestAndReport()`
 
-### 3. Implement Mandatory Functions
+This is the core logic of the entire project, where the two yield streams are separated and routed to their destinations.
 
-You MUST implement these three core functions:
+### Primary Yield (DSR) -> Auto-Repayment
 
-#### A. `_deployFunds(uint256 _amount)`
-Deploy assets into your yield source:
-```solidity
-function _deployFunds(uint256 _amount) internal override {
-    // Example for Aave:
-    yieldSource.supply(address(asset), _amount, address(this), 0);
-    
-    // Example for ERC4626:
-    // IERC4626(address(yieldSource)).deposit(_amount, address(this));
-}
-```
+1.  **Calculate DSR Profit:** The strategy calculates the appreciation of its sDAI collateral by checking `sDAI.convertToAssets(vaultPos.collateral)` against its `lastCollateralValue`. This profit is the `dsrProfit`.
+2.  **Withdraw Profit:** If `dsrProfit` is greater than zero and there are community members to repay, the strategy withdraws this profit by redeeming the equivalent amount of `sDAI` for `DAI`.
+3.  **Distribute Repayments:** The strategy calculates the `totalCommunityDebt` by iterating through the `communityBorrowers` array and checking each member's debt position on Morpho.
+4.  **Auto-Repay:** It then iterates a second time, calculating each borrower's pro-rata share of the DSR profit. The strategy calls `MORPHO_BLUE.repay(..., communityBorrowers[i])`, using the `onBehalf` parameter to directly pay down the principal of that community member's loan.
 
-#### B. `_freeFunds(uint256 _amount)`
-Withdraw assets from your yield source:
-```solidity
-function _freeFunds(uint256 _amount) internal override {
-    // Example for Aave:
-    yieldSource.withdraw(address(asset), _amount, address(this));
-    
-    // Example for ERC4626:
-    // uint256 shares = IERC4626(address(yieldSource)).convertToShares(_amount);
-    // IERC4626(address(yieldSource)).redeem(shares, address(this), address(this));
-}
-```
+### Secondary Yield (Morpho Interest) -> Public Goods Donation
 
-#### C. `_harvestAndReport()`
-Calculate total assets held by the strategy:
-```solidity
-function _harvestAndReport() internal override returns (uint256 _totalAssets) {
-    // 1. Get assets deployed in yield source
-    uint256 deployedAssets = yieldSource.balanceOf(address(this));
-    
-    // 2. Get idle assets in strategy
-    uint256 idleAssets = asset.balanceOf(address(this));
-    
-    // 3. Return total (MUST include both deployed and idle)
-    _totalAssets = deployedAssets + idleAssets;
-    
-    // Note: Profit/loss is calculated automatically by comparing
-    // with previous totalAssets. Profits are minted to dragonRouter.
-}
-```
+1.  **Calculate Interest Profit:** The strategy calculates the interest earned from its *supply* position in the Morpho market (the `lendingInterest`). This is the interest paid by the community borrowers.
+2.  **Withdraw Profit:** It withdraws this `lendingInterest` (as DAI) from its Morpho supply position.
+3.  **Donate to Public Goods:** The strategy then transfers 100% of this `withdrawn` DAI directly to the `dragonRouter` address, fulfilling its duty as a `YieldDonatingStrategy`.
 
-### 4. Optional Functions
+### The 1:1 Peg
 
-Override these functions based on your strategy's needs:
+Crucially, the function returns `oldTotalAssets`. This reports **zero profit** to the Octant `TokenizedStrategy` layer. By doing this, the vault's share price remains perfectly stable at 1:1 with DAI. The DAO's treasury value doesn't grow; instead, the "profit" is redirected to the community and public goods, which is the entire point.
 
-#### `availableDepositLimit(address _owner)`
-Implement deposit limits if needed:
-```solidity
-function availableDepositLimit(address) public view override returns (uint256) {
-    // Example: Cap at protocol's lending capacity
-    uint256 protocolCapacity = yieldSource.availableCapacity();
-    return protocolCapacity;
-}
-```
+---
 
-#### `availableWithdrawLimit(address _owner)`
-Implement withdrawal limits:
-```solidity
-function availableWithdrawLimit(address) public view override returns (uint256) {
-    // Example: Limited by protocol's available liquidity
-    return yieldSource.availableLiquidity();
-}
-```
+## 4. Withdrawal Logic & The 1200 Wei Tolerance
 
-#### `_emergencyWithdraw(uint256 _amount)`
-Emergency withdrawal logic when strategy is shutdown:
-```solidity
-function _emergencyWithdraw(uint256 _amount) internal override {
-    // Force withdraw from yield source
-    yieldSource.emergencyWithdraw(_amount);
-}
-```
+A critical piece of implementation is the withdrawal logic in `_freeFunds` and `_withdrawProportionally`. This is also the source of the ~1200 wei tolerance seen in the tests.
 
-#### `_tend(uint256 _totalIdle)` and `_tendTrigger()`
-For maintenance between reports:
-```solidity
-function _tend(uint256 _totalIdle) internal override {
-    // Example: Deploy idle funds if above threshold
-    if (_totalIdle > minDeployAmount) {
-        _deployFunds(_totalIdle);
-    }
-}
+**This tolerance is not a bug; it is a feature of robust, safe design.**
 
-function _tendTrigger() internal view override returns (bool) {
-    // Return true when tend should be called
-    return asset.balanceOf(address(this)) > minDeployAmount;
-}
-```
+### The "Dusty" Unwind Problem
 
-### 5. Constructor Parameters
+When a user wants to withdraw 100% of their funds, the strategy must unwind its complex position:
+1.  Withdraw supplied DAI from Morpho.
+2.  Use that DAI to repay its Morpho debt.
+3.  Withdraw its sDAI collateral from Morpho.
+4.  Redeem that sDAI for DAI to return to the user.
 
-When deploying your strategy, provide these parameters:
-- `_yieldSource`: Address of your yield protocol (Aave, Compound, etc.)
-- `_asset`: The token to be managed (USDC, DAI, etc.)
-- `_name`: Your strategy name (e.g., "USDC Aave YieldDonating")
-- `_management`: Address that can configure the strategy
-- `_keeper`: Address that can call report() and tend()
-- `_emergencyAdmin`: Address that can shutdown the strategy
-- `_donationAddress`: The dragonRouter address (receives minted profit shares)
-- `_enableBurning`: Whether to enable loss protection via share burning
-- `_tokenizedStrategyAddress`: YieldDonatingTokenizedStrategy implementation
+The problem is that on-chain math creates "dust." Due to rounding or micro-second interest accrual, even after repaying what it *thinks* is 100% of its debt, the strategy might still owe `1 wei` of debt. If it then tries to withdraw 100% of its collateral, the Morpho protocol will revert the transaction because a position with debt cannot have zero collateral.
 
-## Testing Your Strategy
+### The Solution: `_withdrawProportionally`
 
-### 1. Update Test Configuration
+Our implementation (`_withdrawProportionally`) solves this elegantly:
 
-Modify `src/test/yieldDonating/YieldDonatingSetup.sol`:
-- Set your yield source interface and mock
-- Adjust test parameters as needed
+1.  **Unwind Supply & Repay:** The strategy first withdraws its supplied DAI and repays its debt, *explicitly repaying by assets, not shares*, which is more robust against rounding.
+2.  **Check for Dust:** It then *re-checks* its position *after* the repayment to see if any `remainingDebtAssets` (dust) still exist.
+3.  **Leave Collateral Dust:** If it's a full unwind and `remainingDebtAssets > 0`, the strategy *intentionally leaves a tiny amount of collateral behind*. It calculates the exact `collateralDustShares` (e.g., 1200 wei) needed to safely cover the `remainingDebtAssets` (e.g., 10 wei) based on the market's LTV.
+4.  **Succeed:** The withdrawal succeeds, returning the full amount *minus* the ~1200 wei of collateral dust, which is necessary for the transaction to complete.
 
-### 2. Run Tests
+### `assertApproxEqAbs` in Tests
 
-```sh
-# Run all YieldDonating tests
-make test
+This is why the tests in `YieldDonatingShutdown.t.sol` use `assertApproxEqAbs(finalBalance, expected, 1200, ...)`. This test confirms that the user receives their full expected amount, with an "acceptable error" of 1200 wei, which we know is the collateral dust *intentionally* left behind for safety.
 
-# Run specific test file
-make test-contract contract=YieldDonatingOperation
+---
 
-# Run with traces for debugging
-make trace
-```
+## 5. Test Suite Verification
 
-### 3. Key Test Scenarios
+The project is validated by a comprehensive test suite in `src/test/yieldDonating/`.
 
-Your tests should verify:
-- ✅ Assets are correctly deployed to yield source
-- ✅ Withdrawals work for various amounts
-- ✅ Profits are minted to dragonRouter (not kept by strategy)
-- ✅ Losses trigger dragonRouter share burning (if enabled)
-- ✅ Emergency withdrawals work when shutdown
-- ✅ Deposit/withdraw limits are enforced
+* **`YieldDonatingSetup.sol` (The Environment):** This is the most important setup file. It **forks Ethereum mainnet** and uses the *real, live addresses* for DAI, sDAI, and Morpho Blue. To allow for large-scale fuzz testing, it uses cheatcodes to `deal` 50 million DAI to a test address and `supply` it to the Morpho market, ensuring our tests run against a realistic, liquid environment.
 
-## Common Implementation Examples
+* **`YieldDonatingOperation.t.sol` (The "Happy Path"):**
+    * `test_profitableReport`: This test is the core proof of the 1:1 peg. It deposits, skips time (allowing yield to accrue), calls `report()`, and then confirms the user can withdraw their *exact* original deposit. This proves that all yield was correctly skimmed off (to donations/repayments) and the user's principal is safe and not affected by yield.
 
+* **`YieldDonatingShutdown.t.sol` (The "Exit Logic"):**
+    * `test_shutdownCanWithdraw`: This test proves the strategy is safe even when shut down. It deposits, skips time, calls `strategy.shutdownStrategy()`, and confirms the user can still redeem their funds. This test correctly uses `assertApproxEqAbs`, verifying our "collateral dust" logic works.
+    * `test_emergencyWithdraw_maxUint`: This confirms the `emergencyWithdraw` function (which also uses `_withdrawProportionally`) can handle `type(uint256).max` and that the user's funds are recoverable, again validating the dust-handling logic.
 
-### ERC4626 Vault Strategy
-```solidity
-function _deployFunds(uint256 _amount) internal override {
-    IERC4626(address(yieldSource)).deposit(_amount, address(this));
-}
-
-function _harvestAndReport() internal override returns (uint256 _totalAssets) {
-    uint256 shares = IERC4626(address(yieldSource)).balanceOf(address(this));
-    uint256 vaultAssets = IERC4626(address(yieldSource)).convertToAssets(shares);
-    uint256 idleAssets = asset.balanceOf(address(this));
-    
-    _totalAssets = vaultAssets + idleAssets;
-}
-```
-
-## Deployment Checklist
-
-- [ ] Implement all TODO functions in the strategy
-- [ ] Update IYieldSource interface for your protocol
-- [ ] Set up proper token approvals in constructor
-- [ ] Test all core functionality
-- [ ] Test profit donation to dragonRouter
-- [ ] Test loss protection if enabled
-- [ ] Verify emergency shutdown procedures
-
-
-## Key Differences from Standard Tokenized Strategies
-
-| Feature | Standard Strategy | YieldDonating Strategy |
-|---------|------------------|----------------------|
-| Performance Fees | Charges fees to LPs | NO fees - all yield donated |
-| Profit Distribution | Kept by strategy/fees | Minted as shares to dragonRouter |
-| Loss Protection | Users bear losses | Optional burning of dragon shares |
-| Use Case | Maximize LP returns | Public goods funding |
-
-
+***

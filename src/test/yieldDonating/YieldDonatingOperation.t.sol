@@ -16,7 +16,6 @@ contract YieldDonatingOperationTest is Setup {
         assertEq(strategy.management(), management);
         assertEq(ITokenizedStrategy(address(strategy)).dragonRouter(), dragonRouter);
         assertEq(strategy.keeper(), keeper);
-        // Check enableBurning using low-level call since it's not in the interface
         (bool success, bytes memory data) = address(strategy).staticcall(abi.encodeWithSignature("enableBurning()"));
         require(success, "enableBurning call failed");
         bool currentEnableBurning = abi.decode(data, (bool));
@@ -39,7 +38,6 @@ contract YieldDonatingOperationTest is Setup {
         // Get dragonRouter balance before
         uint256 dragonRouterBalanceBefore = asset.balanceOf(dragonRouter);
 
-        // Report - in AutoRepaying strategy, this maintains 1:1 peg
         vm.prank(keeper);
         (uint256 profit, uint256 loss) = strategy.report();
 
@@ -88,7 +86,6 @@ contract YieldDonatingOperationTest is Setup {
         vm.prank(user);
         strategy.redeem(_amount, user, user);
 
-       // --- FIX: Use assertApproxEqAbs to account for ~1170 wei dust from collateral ---
        uint256 expectedBalance = balanceBefore + _amount;
        uint256 actualBalance = asset.balanceOf(user);
        assertApproxEqAbs(actualBalance, expectedBalance, 1200, "!final balance after tendTrigger");
