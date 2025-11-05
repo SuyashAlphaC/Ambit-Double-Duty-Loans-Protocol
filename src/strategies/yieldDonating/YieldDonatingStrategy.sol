@@ -293,7 +293,6 @@ contract YieldDonatingStrategy is BaseStrategy {
     }
     /**
      * @notice Deploy funds to create community lending pool
-     * @author SuyashAlphaC
      * @dev Called when DAO deposits DAI into the vault
      * @param _amount Amount of DAI to deploy
      *
