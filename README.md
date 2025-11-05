@@ -1,9 +1,12 @@
-
 ***
 
-# Auto-Repaying Public Goods Loan Strategy (Spark + Morpho)
+# Ambit : Double Duty Yield : Auto-repaying loans, self-funding public goods 
+
+![Ambit Logo](Image%20Gallery/Logo.png)
 
 ## 1. High-Level Concept: The "Buy-One-Get-One" for DAOs
+
+![Home Screen](Image%20Gallery/Home.png)
 
 This project implements the **"Auto-Repaying Public Goods Loan"** strategy, a sophisticated, dual-benefit system built for the Octant `YieldDonatingStrategy` framework.
 
@@ -18,7 +21,10 @@ The DAO's treasury itself remains 1:1 pegged to their deposit, as all generated 
 
 ## 2. Core Architecture: The "Winning Twist"
 
+![Architecture Chart](Image%20Gallery/Chart.png)
+
 The strategy's architecture, implemented in `src/strategies/yieldDonating/YieldDonatingStrategy.sol`, is a multi-step process that creates two distinct yield streams.
+
 
 ### `_deployFunds(uint256 _amount)`: Building the Engine
 
@@ -39,6 +45,7 @@ At this point, the strategy is in a stable state:
 ## 3. The Dual-Yield Mechanism: `_harvestAndReport()`
 
 This is the core logic of the entire project, where the two yield streams are separated and routed to their destinations.
+![Second View](Image%20Gallery/Second.png)
 
 ### Primary Yield (DSR) -> Auto-Repayment
 
