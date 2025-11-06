@@ -13,7 +13,6 @@ import {ITokenizedStrategy} from "@octant-core/core/interfaces/ITokenizedStrateg
 // Inherit the events so they can be checked if desired.
 import {IEvents} from "@tokenized-strategy/interfaces/IEvents.sol";
 import {YieldDonatingTokenizedStrategy} from "@octant-core/strategies/yieldDonating/YieldDonatingTokenizedStrategy.sol";
-
 contract YieldDonatingSetup is Test, IEvents {
     // Contract instances that we will use repeatedly.
     ERC20 public asset;
