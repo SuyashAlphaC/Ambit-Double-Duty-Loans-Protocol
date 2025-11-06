@@ -140,69 +140,6 @@ contract YieldDonatingSetup is Test, IEvents {
         vm.label(address(0x999999), "liquidityProvider");
     }
 
-    /* ========== MOCK IMPLEMENTATION (Commented out) ========== */
-    /*
-    function setUp() public virtual {
-        // Deploy mock DAI token
-        MockERC20 mockDAI = new MockERC20("DAI Stablecoin", "DAI", 18);
-        asset = ERC20(address(mockDAI));
-        address testAssetAddress = address(mockDAI);
-
-        // Mint some DAI to user for testing
-        mockDAI.mint(user, 1_000_000 * 10 ** 18);
-
-        // Deploy mock sDAI (ERC4626 vault)
-        MockERC4626 mockSDAI = new MockERC4626(address(asset), "Savings DAI", "sDAI");
-        sDAI = address(mockSDAI);
-        sparkPool = address(mockSDAI); // sDAI acts as Spark pool for simplicity
-
-        // Deploy mock Morpho Blue
-        MockMorphoBlue mockMorphoBlue = new MockMorphoBlue();
-        morphoBlue = address(mockMorphoBlue);
-
-        // Setup mock addresses for oracle and IRM
-        oracle = address(0x5000); // Mock oracle
-        IRM = address(0x6000);    // Mock IRM
-
-        // Setup market parameters
-        marketParams = MarketParams({
-            loanToken: testAssetAddress,
-            collateralToken: sDAI,
-            oracle: oracle,
-            irm: IRM,
-            lltv: 0.86e18 // 86% LLTV
-        });
-
-        // Create the market in MockMorphoBlue
-        mockMorphoBlue.createMarket(marketParams);
-
-        // Mint some DAI to the mock contracts for liquidity
-        mockDAI.mint(address(mockMorphoBlue), 10_000_000 * 10 ** 18);
-
-        // Set decimals
-        decimals = asset.decimals();
-
-        // Set max fuzz amount to 1,000,000 of the asset
-        maxFuzzAmount = 1_000_000 * 10 ** decimals;
-
-        // Deploy YieldDonatingTokenizedStrategy implementation
-        tokenizedStrategyAddress = address(new YieldDonatingTokenizedStrategy());
-
-        strategyFactory = new StrategyFactory(management, dragonRouter, keeper, emergencyAdmin);
-
-        // Deploy strategy and set variables
-        strategy = IStrategyInterface(setUpStrategy());
-
-        // label all the used addresses for traces
-        vm.label(keeper, "keeper");
-        vm.label(address(asset), "asset");
-        vm.label(management, "management");
-        vm.label(address(strategy), "strategy");
-        vm.label(dragonRouter, "dragonRouter");
-    }
-    */
-    /* ========== END MOCK IMPLEMENTATION ========== */
-
     function setUpStrategy() public returns (address) {
         // Deploy the Auto-Repaying Community Loan Strategy
         IStrategyInterface _strategy = IStrategyInterface(
@@ -275,7 +212,6 @@ contract YieldDonatingSetup is Test, IEvents {
 
     function setEnableBurning(bool _enableBurning) public {
         vm.prank(management);
-        // Call using low-level call since setEnableBurning may not be in all interfaces
         (bool success, ) = address(strategy).call(abi.encodeWithSignature("setEnableBurning(bool)", _enableBurning));
         require(success, "setEnableBurning failed");
     }
